@@ -118,6 +118,17 @@ public:
     inline operator const char *() const;
     inline operator const void *() const;
 #endif
+
+#if (defined(Q_CC_GNU_ONLY) && !defined(Q_OS_QNX)) \
+    || defined(Q_CC_CLANG_ONLY) \
+    || defined(Q_QDOC)
+#define QT_BYTEARRAY_CONVERTS_TO_STD_STRING_VIEW
+#endif
+#ifdef QT_BYTEARRAY_CONVERTS_TO_STD_STRING_VIEW
+    Q_IMPLICIT operator std::string_view() const noexcept
+    { return std::string_view(data(), std::size_t(size())); }
+#endif
+
     inline char *data();
     inline const char *data() const noexcept;
     const char *constData() const noexcept { return data(); }

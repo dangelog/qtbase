@@ -4792,6 +4792,12 @@ std::string QByteArray::toStdString() const
     return std::string(data(), size_t(size()));
 }
 
+/*! \fn QByteArray::operator std::string_view() const
+    \since 6.9
+
+    Converts this QByteArray object to a \c{std::string_view} object.
+*/
+
 /*!
     \since 4.4
 
