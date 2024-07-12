@@ -9,7 +9,7 @@ QT_BEGIN_NAMESPACE
 
 QT_IMPL_METATYPE_EXTERN_TAGGED(QTextOption::Tab, QTextOption_Tab)
 
-struct QTextOptionPrivate
+struct QTextOptionPrivate : QSharedData
 {
     QList<QTextOption::Tab> tabStops;
 };
@@ -46,55 +46,54 @@ QTextOption::QTextOption(Qt::Alignment alignment)
 /*!
     Destroys the text option.
 */
-QTextOption::~QTextOption()
-{
-    delete d;
-}
+QTextOption::~QTextOption() = default;
 
 /*!
     \fn QTextOption::QTextOption(const QTextOption &other)
 
     Construct a copy of the \a other text option.
 */
-QTextOption::QTextOption(const QTextOption &o)
-    : align(o.align),
-      wordWrap(o.wordWrap),
-      design(o.design),
-      direction(o.direction),
-      unused(o.unused),
-      f(o.f),
-      tab(o.tab),
-      d(nullptr)
-{
-    if (o.d)
-        d = new QTextOptionPrivate(*o.d);
-}
+QTextOption::QTextOption(const QTextOption &o) = default;
+
+/*!
+    \fn QTextOption::QTextOption(QTextOption &&other)
+    \since 6.9
+
+    Construct a text option by moving from \a other.
+*/
 
 /*!
     \fn QTextOption &QTextOption::operator=(const QTextOption &other)
 
-    Returns \c true if the text option is the same as the \a other text option;
-    otherwise returns \c false.
+    Copy-assigns the text option \a other to this object, and returns a
+    reference to this object.
 */
-QTextOption &QTextOption::operator=(const QTextOption &o)
+QTextOption &QTextOption::operator=(const QTextOption &o) = default;
+
+/*!
+    \fn QTextOption &QTextOption::operator=(QTextOption &&other)
+    \since 6.9
+
+    Move-assigns the text option \a other to this object, and returns a
+    reference to this object.
+*/
+
+/*!
+    \fn void QTextOption::swap(QTextOption &other)
+    \since 6.9
+
+    Swaps this text option with \a other. This operation is very fast
+    and never fails.
+*/
+
+QT_DEFINE_QESDP_SPECIALIZATION_DTOR(QTextOptionPrivate)
+
+void QTextOption::detach()
 {
-    if (this == &o)
-        return *this;
-
-    QTextOptionPrivate* dNew = nullptr;
-    if (o.d)
-        dNew = new QTextOptionPrivate(*o.d);
-    delete d;
-    d = dNew;
-
-    align = o.align;
-    wordWrap = o.wordWrap;
-    design = o.design;
-    direction = o.direction;
-    unused = o.unused;
-    f = o.f;
-    tab = o.tab;
-    return *this;
+    if (!d)
+        d.reset(new QTextOptionPrivate);
+    else
+        d.detach();
 }
 
 /*!
@@ -105,8 +104,7 @@ QTextOption &QTextOption::operator=(const QTextOption &o)
 */
 void QTextOption::setTabArray(const QList<qreal> &tabStops)
 {
-    if (!d)
-        d = new QTextOptionPrivate;
+    detach();
     QList<QTextOption::Tab> tabs;
     QTextOption::Tab tab;
     tabs.reserve(tabStops.size());
@@ -126,8 +124,7 @@ void QTextOption::setTabArray(const QList<qreal> &tabStops)
 */
 void QTextOption::setTabs(const QList<QTextOption::Tab> &tabStops)
 {
-    if (!d)
-        d = new QTextOptionPrivate;
+    detach();
     d->tabStops = tabStops;
 }
 
@@ -159,6 +156,24 @@ QList<QTextOption::Tab> QTextOption::tabs() const
     return d->tabStops;
 }
 
+bool comparesEqual(const QTextOption &lhs,
+                   const QTextOption &rhs) noexcept
+{
+    if ((lhs.align != rhs.align) ||
+        (lhs.wordWrap != rhs.wordWrap) ||
+        (lhs.design != rhs.design) ||
+        (lhs.direction != rhs.direction) ||
+        (lhs.f != rhs.f) ||
+        (lhs.tab != rhs.tab))
+    {
+        return false;
+    }
+    if (lhs.d == rhs.d)
+        return true;
+    return lhs.tabs() == rhs.tabs();
+}
+
+
 /*!
     \class QTextOption
     \reentrant
@@ -168,6 +183,8 @@ QList<QTextOption::Tab> QTextOption::tabs() const
     \inmodule QtGui
 
     \ingroup richtext-processing
+
+    \compares equality
 
     QTextOption is used to encapsulate common rich text properties in a single
     object. It contains information about text alignment, layout direction,

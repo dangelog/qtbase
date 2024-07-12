@@ -8,11 +8,13 @@
 #include <QtCore/qnamespace.h>
 #include <QtCore/qchar.h>
 #include <QtCore/qmetatype.h>
+#include <QtCore/qshareddata.h>
 
 
 QT_BEGIN_NAMESPACE
 
 struct QTextOptionPrivate;
+QT_DECLARE_QESDP_SPECIALIZATION_DTOR_WITH_EXPORT(QTextOptionPrivate, Q_GUI_EXPORT)
 
 class Q_GUI_EXPORT QTextOption
 {
@@ -49,7 +51,27 @@ public:
     ~QTextOption();
 
     QTextOption(const QTextOption &o);
+    QTextOption(QTextOption &&other) noexcept = default;
     QTextOption &operator=(const QTextOption &o);
+    QT_MOVE_ASSIGNMENT_OPERATOR_IMPL_VIA_PURE_SWAP(QTextOption)
+
+    inline void swap(QTextOption &other) noexcept
+    {
+        using std::swap;
+
+#define QTEXTOPTION_BITFIELD_SWAP(x) \
+        { auto x_tmp = x; x = other.x; other.x = x_tmp; }
+
+        QTEXTOPTION_BITFIELD_SWAP(align)
+        QTEXTOPTION_BITFIELD_SWAP(wordWrap)
+        QTEXTOPTION_BITFIELD_SWAP(design)
+        QTEXTOPTION_BITFIELD_SWAP(direction)
+#undef QTEXTOPTION_BITFIELD_SWAP
+
+        swap(f, other.f);
+        swap(tab, other.tab);
+        swap(d, other.d);
+    }
 
     inline void setAlignment(Qt::Alignment alignment);
     inline Qt::Alignment alignment() const { return Qt::Alignment(align); }
@@ -94,6 +116,12 @@ public:
     bool useDesignMetrics() const { return design; }
 
 private:
+    void detach();
+
+    friend Q_GUI_EXPORT bool comparesEqual(const QTextOption &lhs,
+                                           const QTextOption &rhs) noexcept;
+    Q_DECLARE_EQUALITY_COMPARABLE(QTextOption)
+
     uint align : 9;
     uint wordWrap : 4;
     uint design : 1;
@@ -101,10 +129,12 @@ private:
     uint unused : 16;
     uint f;
     qreal tab;
-    QTextOptionPrivate *d;
+    QExplicitlySharedDataPointer<QTextOptionPrivate> d;
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(QTextOption::Flags)
+Q_DECLARE_SHARED(QTextOption)
+Q_DECLARE_TYPEINFO(QTextOption::Tab, Q_RELOCATABLE_TYPE);
 
 inline void QTextOption::setAlignment(Qt::Alignment aalignment)
 { align = uint(aalignment.toInt()); }
