@@ -1137,7 +1137,8 @@ function(qt_run_config_compile_test name)
             endif()
 
             if(arg_CXX_STANDARD)
-                if(${arg_CXX_STANDARD} LESS 23 OR ${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.20")
+                if((${arg_CXX_STANDARD} LESS 26 OR ${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.25") OR
+                   (${arg_CXX_STANDARD} LESS 23 OR ${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.20"))
                     set(CMAKE_CXX_STANDARD "${arg_CXX_STANDARD}")
                     set(CMAKE_CXX_STANDARD_REQUIRED OFF)
                 endif()
