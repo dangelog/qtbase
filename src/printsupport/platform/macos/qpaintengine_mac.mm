@@ -1014,6 +1014,18 @@ QCoreGraphicsPaintEngine::updateCompositionMode(QPainter::CompositionMode mode)
     case QPainter::CompositionMode_Xor:
         cg_mode = kCGBlendModeXOR;
         break;
+    case QPainter::CompositionMode_Nonseparable_Hue:
+        cg_mode = kCGBlendModeHue;
+        break;
+    case QPainter::CompositionMode_Nonseparable_Saturation:
+        cg_mode = kCGBlendModeSaturation;
+        break;
+    case QPainter::CompositionMode_Nonseparable_Color:
+        cg_mode = kCGBlendModeColor;
+        break;
+    case QPainter::CompositionMode_Nonseparable_Luminosity:
+        cg_mode = kCGBlendModeLuminosity;
+        break;
     default:
         break;
     }

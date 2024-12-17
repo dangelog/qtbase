@@ -40,6 +40,10 @@ ImageComposer::ImageComposer()
     addOp(QPainter::CompositionMode_SoftLight, tr("SoftLight"));
     addOp(QPainter::CompositionMode_Difference, tr("Difference"));
     addOp(QPainter::CompositionMode_Exclusion, tr("Exclusion"));
+    addOp(QPainter::CompositionMode_Nonseparable_Hue, tr("Hue"));
+    addOp(QPainter::CompositionMode_Nonseparable_Saturation, tr("Saturation"));
+    addOp(QPainter::CompositionMode_Nonseparable_Color, tr("Color"));
+    addOp(QPainter::CompositionMode_Nonseparable_Luminosity, tr("Luminosity"));
 //! [1]
 
 //! [2]
@@ -109,8 +113,12 @@ void ImageComposer::recalculateResult()
     painter.setCompositionMode(mode);
     painter.drawImage(0, 0, sourceImage);
     painter.setCompositionMode(QPainter::CompositionMode_DestinationOver);
-    painter.fillRect(resultImage.rect(), Qt::white);
+    //painter.fillRect(resultImage.rect(), Qt::white);
     painter.end();
+
+    static int counter = 0;
+    QString filename = QString("result-%1.png").arg(counter++, 4, 10, u'0');
+    resultImage.save(filename);
 
     resultLabel->setPixmap(QPixmap::fromImage(resultImage));
 }

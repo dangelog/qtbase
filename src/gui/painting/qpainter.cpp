@@ -2308,6 +2308,22 @@ void QPainter::setBrushOrigin(const QPointF &p)
     where the source is OR'ed with the inverted destination pixels
     (src OR (NOT dst)).
 
+    \value [since 6.10] CompositionMode_Nonseparable_Hue The output is
+    the hue of the source, and the saturation and luminosity of the
+    destination.
+
+    \value [since 6.10] CompositionMode_Nonseparable_Saturation The
+    output is the saturation of the source, and the hue and luminosity
+    of the destination.
+
+    \value [since 6.10] CompositionMode_Nonseparable_Color The output
+    is the hue and saturation of the source, and the luminosity of the
+    destination.
+
+    \value [since 6.10] CompositionMode_Nonseparable_Luminosity The
+    output is the luminosity of the source, and the hue and saturation
+    of the destination.
+
     \omitvalue NCompositionModes
 
     \sa compositionMode(), setCompositionMode(), {QPainter#Composition
@@ -2338,7 +2354,13 @@ void QPainter::setCompositionMode(CompositionMode mode)
         return;
     }
 
-    if (mode >= QPainter::RasterOp_SourceOrDestination) {
+    if (mode >= QPainter::CompositionMode_Nonseparable_Hue) {
+        if (!d->engine->hasFeature(QPaintEngine::NonSeparableBlendModes)) {
+            qWarning("QPainter::setCompositionMode: "
+                     "Non-separable blend modes not supported on device");
+            return;
+        }
+    } else if (mode >= QPainter::RasterOp_SourceOrDestination) {
         if (!d->engine->hasFeature(QPaintEngine::RasterOpModes)) {
             qWarning("QPainter::setCompositionMode: "
                      "Raster operation modes not supported on device");

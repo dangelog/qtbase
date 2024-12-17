@@ -56,7 +56,9 @@ constexpr QPaintEngine::PaintEngineFeatures qt_pdf_decide_features()
     f &= ~(QPaintEngine::PorterDuff
            | QPaintEngine::PerspectiveTransform
            | QPaintEngine::ObjectBoundingModeGradients
-           | QPaintEngine::ConicalGradientFill);
+           | QPaintEngine::ConicalGradientFill
+           | QPaintEngine::NonSeparableBlendModes
+           );
     return f;
 }
 

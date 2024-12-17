@@ -138,6 +138,13 @@ public:
         RasterOp_SetDestination,
         RasterOp_NotDestination,
 
+        // Non-separable blend modes, from
+        // W3C Compositing and Blending Level 1
+        CompositionMode_Nonseparable_Hue,
+        CompositionMode_Nonseparable_Saturation,
+        CompositionMode_Nonseparable_Color,
+        CompositionMode_Nonseparable_Luminosity,
+
         NCompositionModes
     };
     void setCompositionMode(CompositionMode mode);

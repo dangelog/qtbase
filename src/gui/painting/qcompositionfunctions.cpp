@@ -4209,6 +4209,544 @@ void QT_FASTCALL rasterop_solid_NotDestination(uint *Q_DECL_RESTRICT dest,
     rasterop_solid_SourceXorDestination (dest, length, 0x00ffffff, const_alpha);
 }
 
+namespace NonseparableHelpers
+{
+
+// The APIs of QRgb / QRgba64 / QRgbaFloat don't match,
+// so this class abstracts them away.
+template <typename PixelType>
+struct QFloatColorTraits;
+
+template <>
+struct QFloatColorTraits<QRgb>
+{
+    static constexpr inline float SCALE_FACTOR = 255.0f;
+    static constexpr inline float INV_SCALE_FACTOR = 1.0f / 255.0f;
+
+    static constexpr float alpha(QRgb c) noexcept { return qAlpha(c) * INV_SCALE_FACTOR; }
+    static constexpr float red(QRgb c) noexcept { return qRed(c) * INV_SCALE_FACTOR; }
+    static constexpr float green(QRgb c) noexcept { return qGreen(c) * INV_SCALE_FACTOR; }
+    static constexpr float blue(QRgb c) noexcept { return qBlue(c) * INV_SCALE_FACTOR; }
+
+    static constexpr QRgb fromRgba(float r, float g, float b, float a) noexcept
+    {
+        return qRgba(int(r * SCALE_FACTOR),
+                     int(g * SCALE_FACTOR),
+                     int(b * SCALE_FACTOR),
+                     int(a * SCALE_FACTOR));
+    }
+};
+
+#if QT_CONFIG(raster_64bit)
+template <>
+struct QFloatColorTraits<QRgba64>
+{
+    static constexpr inline float SCALE_FACTOR = 65535.0f;
+    static constexpr inline float INV_SCALE_FACTOR = 1.0f / SCALE_FACTOR;
+
+    static constexpr float alpha(QRgba64 c) noexcept { return c.alpha() / SCALE_FACTOR; }
+    static constexpr float red(QRgba64 c) noexcept { return c.red() / SCALE_FACTOR; }
+    static constexpr float green(QRgba64 c) noexcept { return c.green() / SCALE_FACTOR; }
+    static constexpr float blue(QRgba64 c) noexcept { return c.blue() / SCALE_FACTOR; }
+
+    static constexpr QRgba64 fromRgba(float r, float g, float b, float a) noexcept
+    {
+        return QRgba64::fromRgba64(quint16(r * SCALE_FACTOR),
+                                   quint16(g * SCALE_FACTOR),
+                                   quint16(b * SCALE_FACTOR),
+                                   quint16(a * SCALE_FACTOR));
+    }
+};
+#endif
+
+#if QT_CONFIG(raster_fp)
+template <>
+struct QFloatColorTraits<QRgbaFloat32>
+{
+    static constexpr inline float SCALE_FACTOR = 65535.0f;
+    static constexpr inline float INV_SCALE_FACTOR = 1.0f / SCALE_FACTOR;
+
+    static constexpr float alpha(QRgbaFloat32 c) noexcept { return c.alpha(); }
+    static constexpr float red(QRgbaFloat32 c) noexcept { return c.red(); }
+    static constexpr float green(QRgbaFloat32 c) noexcept { return c.green(); }
+    static constexpr float blue(QRgbaFloat32 c) noexcept { return c.blue(); }
+
+    static constexpr QRgbaFloat32 fromRgba(float r, float g, float b, float a) noexcept
+    {
+        return QRgbaFloat32{r, g, b, a};
+    }
+};
+#endif
+
+// Like QRgbaFloat32, but with vector-like operations, and without alpha support.
+// Manipulating saturation/lum using 8-bit integer operations is just too inaccurate.
+struct QRgbFloat
+{
+    float v[3] = {0.0f, 0.0f, 0.0f};
+
+    template <typename PixelType>
+    static constexpr auto fromPremultipliedArgb(PixelType rgb)
+    {
+        struct FromPremultipliedArgbResult
+        {
+            QRgbFloat color;
+            float alpha;
+        };
+
+        using T = QFloatColorTraits<PixelType>;
+        const float a = T::alpha(rgb);
+        if (qFuzzyIsNull(a))
+            return FromPremultipliedArgbResult{};
+
+        QRgbFloat color{ T::red(rgb), T::green(rgb), T::blue(rgb) };
+        return FromPremultipliedArgbResult{ color / a, a };
+    }
+
+    template <typename PixelType>
+    constexpr void storeArgb(PixelType *Q_DECL_RESTRICT d, float alpha = 1.0f) const
+    {
+        *d = QFloatColorTraits<PixelType>::fromRgba(v[0], v[1], v[2], alpha);
+    }
+
+    friend constexpr QRgbFloat operator+(QRgbFloat lhs, QRgbFloat rhs) noexcept
+    {
+        return QRgbFloat{lhs.v[0] + rhs.v[0], lhs.v[1] + rhs.v[1], lhs.v[2] + rhs.v[2]};
+    }
+
+    constexpr QRgbFloat &operator+=(QRgbFloat arg) noexcept
+    {
+        *this = *this + arg;
+        return *this;
+    }
+
+    friend constexpr QRgbFloat operator-(QRgbFloat lhs, QRgbFloat rhs) noexcept
+    {
+        return QRgbFloat{lhs.v[0] - rhs.v[0], lhs.v[1] - rhs.v[1], lhs.v[2] - rhs.v[2]};
+    }
+
+    constexpr QRgbFloat &operator-=(QRgbFloat arg) noexcept
+    {
+        *this = *this + arg;
+        return *this;
+    }
+
+    friend constexpr QRgbFloat operator*(QRgbFloat lhs, float scale) noexcept
+    {
+        return QRgbFloat{lhs.v[0] * scale, lhs.v[1] * scale, lhs.v[2] * scale};
+    }
+
+    friend constexpr QRgbFloat operator*(float scale, QRgbFloat rhs) noexcept
+    {
+        return QRgbFloat{scale * rhs.v[0], scale * rhs.v[1], scale * rhs.v[2]};
+    }
+
+    constexpr QRgbFloat &operator*=(float scale) noexcept
+    {
+        *this = *this * scale;
+        return *this;
+    }
+
+    friend constexpr QRgbFloat operator/(QRgbFloat lhs, float scale) noexcept
+    {
+        return QRgbFloat{lhs.v[0] / scale, lhs.v[1] / scale, lhs.v[2] / scale };
+    }
+
+    constexpr QRgbFloat &operator/=(float scale) noexcept
+    {
+        *this = *this / scale;
+        return *this;
+    }
+
+    constexpr float max() const noexcept
+    {
+        return std::max({v[0], v[1], v[2]});
+    }
+
+    constexpr float min() const noexcept
+    {
+        return std::min({v[0], v[1], v[2]});
+    }
+
+    // Following functions are from https://www.w3.org/TR/compositing/#blendingnonseparable
+    // changing the function names to CamelCase, and acting on *this
+    // instead on a input parameter.
+    constexpr float lum() const noexcept
+    {
+        return 0.3f * v[0] + 0.59f * v[1] + 0.11f * v[2];
+    }
+
+private:
+    constexpr void clipColor() noexcept
+    {
+        const float L = lum();
+        const QRgbFloat Lcolor{L, L, L};
+
+        const float n = min();
+        const float x = max();
+
+        // FIXME: these divisions may divide by zero.
+        // Should lum() act on capped values?
+        if (n < 0.0f)
+            *this = Lcolor + (((*this - Lcolor) * L) / (L - n));
+        if (x > 1.0f)
+            *this = Lcolor + (((*this - Lcolor) * (1.0f - L)) / (x - L));
+    }
+
+public:
+    constexpr void setLum(float l) noexcept
+    {
+        const float d = l - lum();
+        *this += QRgbFloat{d, d, d};
+        clipColor();
+    }
+
+    constexpr float sat() const noexcept
+    {
+        return max() - min();
+    }
+
+    constexpr void setSat(float s) noexcept
+    {
+        int minIdx = 0;
+        int midIdx = 1;
+        int maxIdx = 2;
+
+        const auto adjust = [&](int &a, int &b)
+        {
+            if (v[a] < v[b])
+                qSwap(a, b);
+        };
+
+        adjust(midIdx, minIdx);
+        adjust(maxIdx, midIdx);
+        adjust(midIdx, minIdx);
+
+        float &Cmin = v[minIdx];
+        float &Cmid = v[midIdx];
+        float &Cmax = v[maxIdx];
+
+        if (Cmax > Cmin) {
+            Cmid = ((Cmid - Cmin) * s) / (Cmax - Cmin);
+            Cmax = s;
+        } else {
+            Cmid = 0.0f;
+            Cmax = 0.0f;
+        }
+
+        Cmin = 0.0f;
+    }
+};
+
+struct HueBlending
+{
+    Q_ALWAYS_INLINE static QRgbFloat blend(QRgbFloat s, QRgbFloat d)
+    {
+        // B(Cb, Cs) = SetLum(SetSat(Cs, Sat(Cb)), Lum(Cb))
+        const float S = d.sat();
+        const float L = d.lum();
+        s.setSat(S);
+        s.setLum(L);
+        return s;
+    }
+};
+
+struct SaturationBlending
+{
+    Q_ALWAYS_INLINE static QRgbFloat blend(QRgbFloat s, QRgbFloat d)
+    {
+        // B(Cb, Cs) = SetLum(SetSat(Cb, Sat(Cs)), Lum(Cb))
+        const float S = s.sat();
+        const float L = d.lum();
+        d.setSat(S);
+        d.setLum(L);
+        return d;
+    }
+};
+
+struct ColorBlending
+{
+    Q_ALWAYS_INLINE static QRgbFloat blend(QRgbFloat s, QRgbFloat d)
+    {
+        // B(Cb, Cs) = SetLum(Cs, Lum(Cb))
+        const float L = d.lum();
+        s.setLum(L);
+        return s;
+    }
+};
+
+struct LuminosityBlending
+{
+    Q_ALWAYS_INLINE static QRgbFloat blend(QRgbFloat s, QRgbFloat d)
+    {
+        // B(Cb, Cs) = SetLum(Cb, Lum(Cs))
+        const float L = s.lum();
+        d.setLum(L);
+        return d;
+    }
+};
+
+template <typename NonseparableBlending, typename PixelType>
+static void blend_and_compose(PixelType *Q_DECL_RESTRICT dest, QRgbFloat s, float sa, uint const_alpha)
+{
+    const float sia = 1.0f - sa;
+
+    const auto [d, da] = QRgbFloat::fromPremultipliedArgb(*dest);
+    const float dia = 1.0f - da;
+
+    // 1) calculate the intermediate blend result
+    const QRgbFloat B = NonseparableBlending::blend(s, d);
+
+    // 2) blend it with the destination alpha
+    const QRgbFloat blended = dia * s + da * B;
+
+    // 3) compose over the destination with SourceOver compositing
+    const QRgbFloat result = (sa * blended) + (sia * da * d); // premultiplied
+    const float ra = sa + sia * da;
+
+    // 4) modulate the result using const_alpha
+    if (const_alpha == 255) {
+        result.storeArgb(dest, ra);
+    } else {
+        const float caf = const_alpha / 255.0f;
+        const float ciaf = 1.0f - caf;
+
+        const QRgbFloat resultCA = result * caf + d * ciaf;
+        const float raCA = ra * caf + da * ciaf;
+
+        resultCA.storeArgb(dest, raCA);
+    }
+}
+
+} // namespace NonseparableHelpers
+
+template <typename NonseparableBlending, typename PixelType>
+static void comp_func_solid_nonseparable_template(PixelType *Q_DECL_RESTRICT dest,
+                                                  int length,
+                                                  PixelType color,
+                                                  uint const_alpha)
+{
+    using namespace NonseparableHelpers;
+
+    const auto [s, sa] = QRgbFloat::fromPremultipliedArgb(color);
+    for (int i = 0; i < length; ++i)
+        blend_and_compose<NonseparableBlending>(&dest[i], s, sa, const_alpha);
+}
+
+template <typename NonseparableBlending, typename PixelType>
+static void comp_func_nonseparable_template(PixelType *Q_DECL_RESTRICT dest,
+                                            const PixelType *Q_DECL_RESTRICT src,
+                                            int length,
+                                            uint const_alpha)
+{
+    using namespace NonseparableHelpers;
+
+    for (int i = 0; i < length; ++i) {
+        const auto [s, sa] = QRgbFloat::fromPremultipliedArgb(src[i]);
+        blend_and_compose<NonseparableBlending>(&dest[i], s, sa, const_alpha);
+    }
+}
+
+// Hue
+void QT_FASTCALL comp_func_solid_nonseparable_hue(uint *Q_DECL_RESTRICT dest,
+                                                  int length,
+                                                  uint color,
+                                                  uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::HueBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_hue(uint *Q_DECL_RESTRICT dest,
+                                            const uint *Q_DECL_RESTRICT src,
+                                            int length,
+                                            uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::HueBlending>(dest, src, length, const_alpha);
+}
+
+void QT_FASTCALL comp_func_solid_nonseparable_hue_rgb64(QRgba64 *Q_DECL_RESTRICT dest,
+                                                        int length,
+                                                        QRgba64 color,
+                                                        uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::HueBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_hue_rgb64(QRgba64 *Q_DECL_RESTRICT dest,
+                                                  const QRgba64 *Q_DECL_RESTRICT src,
+                                                  int length,
+                                                  uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::HueBlending>(dest, src, length, const_alpha);
+}
+
+void QT_FASTCALL comp_func_solid_nonseparable_hue_rgbafp(QRgbaFloat32 *Q_DECL_RESTRICT dest,
+                                                        int length,
+                                                        QRgbaFloat32 color,
+                                                        uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::HueBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_hue_rgbafp(QRgbaFloat32 *Q_DECL_RESTRICT dest,
+                                                   const QRgbaFloat32 *Q_DECL_RESTRICT src,
+                                                   int length,
+                                                   uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::HueBlending>(dest, src, length, const_alpha);
+}
+
+
+// Saturation
+void QT_FASTCALL comp_func_solid_nonseparable_saturation(uint *Q_DECL_RESTRICT dest,
+                                                  int length,
+                                                  uint color,
+                                                  uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::SaturationBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_saturation(uint *Q_DECL_RESTRICT dest,
+                                            const uint *Q_DECL_RESTRICT src,
+                                            int length,
+                                            uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::SaturationBlending>(dest, src, length, const_alpha);
+}
+
+void QT_FASTCALL comp_func_solid_nonseparable_saturation_rgb64(QRgba64 *Q_DECL_RESTRICT dest,
+                                                        int length,
+                                                        QRgba64 color,
+                                                        uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::SaturationBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_saturation_rgb64(QRgba64 *Q_DECL_RESTRICT dest,
+                                                  const QRgba64 *Q_DECL_RESTRICT src,
+                                                  int length,
+                                                  uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::SaturationBlending>(dest, src, length, const_alpha);
+}
+
+void QT_FASTCALL comp_func_solid_nonseparable_saturation_rgbafp(QRgbaFloat32 *Q_DECL_RESTRICT dest,
+                                                        int length,
+                                                        QRgbaFloat32 color,
+                                                        uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::SaturationBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_saturation_rgbafp(QRgbaFloat32 *Q_DECL_RESTRICT dest,
+                                                   const QRgbaFloat32 *Q_DECL_RESTRICT src,
+                                                   int length,
+                                                   uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::SaturationBlending>(dest, src, length, const_alpha);
+}
+
+
+
+// Color
+void QT_FASTCALL comp_func_solid_nonseparable_color(uint *Q_DECL_RESTRICT dest,
+                                                  int length,
+                                                  uint color,
+                                                  uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::ColorBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_color(uint *Q_DECL_RESTRICT dest,
+                                              const uint *Q_DECL_RESTRICT src,
+                                              int length,
+                                              uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::ColorBlending>(dest, src, length, const_alpha);
+}
+
+void QT_FASTCALL comp_func_solid_nonseparable_color_rgb64(QRgba64 *Q_DECL_RESTRICT dest,
+                                                        int length,
+                                                        QRgba64 color,
+                                                        uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::ColorBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_color_rgb64(QRgba64 *Q_DECL_RESTRICT dest,
+                                                  const QRgba64 *Q_DECL_RESTRICT src,
+                                                  int length,
+                                                  uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::ColorBlending>(dest, src, length, const_alpha);
+}
+
+void QT_FASTCALL comp_func_solid_nonseparable_color_rgbafp(QRgbaFloat32 *Q_DECL_RESTRICT dest,
+                                                        int length,
+                                                        QRgbaFloat32 color,
+                                                        uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::ColorBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_color_rgbafp(QRgbaFloat32 *Q_DECL_RESTRICT dest,
+                                                   const QRgbaFloat32 *Q_DECL_RESTRICT src,
+                                                   int length,
+                                                   uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::ColorBlending>(dest, src, length, const_alpha);
+}
+
+
+// Luminosity
+void QT_FASTCALL comp_func_solid_nonseparable_luminosity(uint *Q_DECL_RESTRICT dest,
+                                                         int length,
+                                                         uint color,
+                                                         uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::LuminosityBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_luminosity(uint *Q_DECL_RESTRICT dest,
+                                                   const uint *Q_DECL_RESTRICT src,
+                                                   int length,
+                                                   uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::LuminosityBlending>(dest, src, length, const_alpha);
+}
+
+
+void QT_FASTCALL comp_func_solid_nonseparable_luminosity_rgb64(QRgba64 *Q_DECL_RESTRICT dest,
+                                                        int length,
+                                                        QRgba64 color,
+                                                        uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::LuminosityBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_luminosity_rgb64(QRgba64 *Q_DECL_RESTRICT dest,
+                                                  const QRgba64 *Q_DECL_RESTRICT src,
+                                                  int length,
+                                                  uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::LuminosityBlending>(dest, src, length, const_alpha);
+}
+
+void QT_FASTCALL comp_func_solid_nonseparable_luminosity_rgbafp(QRgbaFloat32 *Q_DECL_RESTRICT dest,
+                                                        int length,
+                                                        QRgbaFloat32 color,
+                                                        uint const_alpha)
+{
+    comp_func_solid_nonseparable_template<NonseparableHelpers::LuminosityBlending>(dest, length, color, const_alpha);
+}
+
+void QT_FASTCALL comp_func_nonseparable_luminosity_rgbafp(QRgbaFloat32 *Q_DECL_RESTRICT dest,
+                                                   const QRgbaFloat32 *Q_DECL_RESTRICT src,
+                                                   int length,
+                                                   uint const_alpha)
+{
+    comp_func_nonseparable_template<NonseparableHelpers::LuminosityBlending>(dest, src, length, const_alpha);
+}
+
 CompositionFunctionSolid qt_functionForModeSolid_C[] = {
         comp_func_solid_SourceOver,
         comp_func_solid_DestinationOver,
@@ -4247,7 +4785,11 @@ CompositionFunctionSolid qt_functionForModeSolid_C[] = {
         rasterop_solid_SourceOrNotDestination,
         rasterop_solid_ClearDestination,
         rasterop_solid_SetDestination,
-        rasterop_solid_NotDestination
+        rasterop_solid_NotDestination,
+        comp_func_solid_nonseparable_hue,
+        comp_func_solid_nonseparable_saturation,
+        comp_func_solid_nonseparable_color,
+        comp_func_solid_nonseparable_luminosity
 };
 
 static_assert(std::size(qt_functionForModeSolid_C) == QPainter::NCompositionModes);
@@ -4278,13 +4820,20 @@ CompositionFunctionSolid64 qt_functionForModeSolid64_C[] = {
         comp_func_solid_SoftLight_rgb64,
         comp_func_solid_Difference_rgb64,
         comp_func_solid_Exclusion_rgb64,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        comp_func_solid_nonseparable_hue_rgb64,
+        comp_func_solid_nonseparable_saturation_rgb64,
+        comp_func_solid_nonseparable_color_rgb64,
+        comp_func_solid_nonseparable_luminosity_rgb64
 #else
         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr
 #endif
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
 };
 
 static_assert(std::size(qt_functionForModeSolid64_C) == QPainter::NCompositionModes);
@@ -4315,12 +4864,20 @@ CompositionFunctionSolidFP qt_functionForModeSolidFP_C[] = {
         comp_func_solid_SoftLight_rgbafp,
         comp_func_solid_Difference_rgbafp,
         comp_func_solid_Exclusion_rgbafp,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        comp_func_solid_nonseparable_hue_rgbafp,
+        comp_func_solid_nonseparable_saturation_rgbafp,
+        comp_func_solid_nonseparable_color_rgbafp,
+        comp_func_solid_nonseparable_luminosity_rgbafp
 #else
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr
 #endif
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
 };
 
 static_assert(std::size(qt_functionForModeSolidFP_C) == QPainter::NCompositionModes);
@@ -4363,7 +4920,11 @@ CompositionFunction qt_functionForMode_C[] = {
         rasterop_SourceOrNotDestination,
         rasterop_ClearDestination,
         rasterop_SetDestination,
-        rasterop_NotDestination
+        rasterop_NotDestination,
+        comp_func_nonseparable_hue,
+        comp_func_nonseparable_saturation,
+        comp_func_nonseparable_color,
+        comp_func_nonseparable_luminosity
 };
 
 static_assert(std::size(qt_functionForMode_C) == QPainter::NCompositionModes);
@@ -4394,13 +4955,20 @@ CompositionFunction64 qt_functionForMode64_C[] = {
         comp_func_SoftLight_rgb64,
         comp_func_Difference_rgb64,
         comp_func_Exclusion_rgb64,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        comp_func_nonseparable_hue_rgb64,
+        comp_func_nonseparable_saturation_rgb64,
+        comp_func_nonseparable_color_rgb64,
+        comp_func_nonseparable_luminosity_rgb64
 #else
         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
         nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr
 #endif
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
 };
 
 static_assert(std::size(qt_functionForMode64_C) == QPainter::NCompositionModes);
@@ -4431,12 +4999,20 @@ CompositionFunctionFP qt_functionForModeFP_C[] = {
         comp_func_SoftLight_rgbafp,
         comp_func_Difference_rgbafp,
         comp_func_Exclusion_rgbafp,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        comp_func_nonseparable_hue_rgbafp,
+        comp_func_nonseparable_saturation_rgbafp,
+        comp_func_nonseparable_color_rgbafp,
+        comp_func_nonseparable_luminosity_rgbafp
 #else
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+        nullptr, nullptr, nullptr, nullptr
 #endif
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr
 };
 
 static_assert(std::size(qt_functionForModeFP_C) == QPainter::NCompositionModes);

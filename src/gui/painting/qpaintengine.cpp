@@ -186,6 +186,7 @@ QFont QTextItem::font() const
                             drawing primitives.
   \value RadialGradientFill The engine supports radial gradient fills.
   \value RasterOpModes      The engine supports bitwise raster operations.
+  \value [since 6.10] NonSeparableBlendModes The engine supports non-separable blend modes.
   \value AllFeatures        All of the above features. This enum value is usually
                             used as a bit mask.
 */
